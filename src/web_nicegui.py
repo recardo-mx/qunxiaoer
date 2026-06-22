@@ -516,15 +516,22 @@ def show_overview_tab():
         total_msgs = sum(stats['category_stats'].values())
         urgent_count = stats['category_stats'].get('urgent', 0)
 
+        # 升级风险统计
+        risk_stats = db.get_escalation_risk_stats()
+        high_risk_count = risk_stats.get('high', {}).get('count', 0)
+        med_risk_count = risk_stats.get('medium', {}).get('count', 0)
+
         # KPI 卡片
         overview_content.clear()
         with overview_content:
             with ui.row().classes('w-full gap-4 mb-6'):
+                kpi_color = DANGER if high_risk_count > 0 else WARNING
                 for title, value, subtitle, color in [
                     (f'{time_range.value}消息', str(total_msgs), '全部消息', PRIMARY),
                     ('紧急诉求', str(urgent_count), '需要立即处理', DANGER),
                     ('预警总数', str(alert_total), '待处理预警', WARNING),
                     ('处理率', handle_rate, '已处理占比', SUCCESS),
+                    ('升级风险', str(high_risk_count + med_risk_count), '潜在冲突升级', kpi_color),
                 ]:
                     with ui.card().classes('stat-card flex-1 p-5'):
                         ui.label(title).style(f'font-size: 13px; color: {GRAY_500}; font-weight: 500;')
@@ -570,6 +577,33 @@ def show_overview_tab():
                     else:
                         with ui.column().classes('empty-state'):
                             ui.label('暂无待处理预警').style(f'font-size: 14px; color: {GRAY_400};')
+
+            # 冲突升级风险
+            with ui.row().classes('w-full mt-4'):
+                with ui.card().classes('content-card w-full p-6'):
+                    ui.label('⚠️ 冲突升级风险').classes('section-title')
+                    clusters = db.get_issue_clusters(active_only=True)[:5]
+                    if clusters:
+                        level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
+                        for c in clusters:
+                            rl = c['risk_level']
+                            lc = level_colors.get(rl, GRAY_500)
+                            loc = c['location']
+                            top = c['topic']
+                            cnt = c['message_count']
+                            score = c['risk_score']
+                            lat = c['last_at'][:16]
+                            with ui.card().classes(f'alert-item alert-{rl} p-3 mb-2').style(f'border-radius: 8px; border: none; background: {GRAY_50};'):
+                                with ui.row().classes('items-center justify-between'):
+                                    with ui.column().classes('flex-1'):
+                                        ui.label(f'{loc} · {top}').style(f'font-size: 13px; font-weight: 600; color: {GRAY_800};')
+                                        with ui.row().classes('items-center gap-2'):
+                                            ui.label(f'已投诉 {cnt} 次').style(f'font-size: 12px; color: {GRAY_500};')
+                                            ui.label(f'风险指数: {score:.1f}').style(f'font-size: 12px; color: {lc}; font-weight: 600;')
+                                            ui.label(f'最近: {lat}').style(f'font-size: 11px; color: {GRAY_400};')
+                    else:
+                        with ui.column().classes('empty-state'):
+                            ui.label('暂无冲突升级风险').style(f'font-size: 13px; color: {GRAY_400};')
 
     time_range.on('change', lambda _: refresh_overview())
     overview_content = ui.column().classes('w-full')

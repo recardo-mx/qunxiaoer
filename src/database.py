@@ -72,6 +72,22 @@ class Database:
             )
         ''')
 
+        # 冲突聚合表（同一地点+主题的多次投诉）
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS issue_clusters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                location TEXT,
+                topic TEXT,
+                message_count INTEGER DEFAULT 1,
+                first_at TIMESTAMP,
+                last_at TIMESTAMP,
+                risk_score REAL DEFAULT 0,
+                risk_level TEXT DEFAULT 'low',
+                is_active INTEGER DEFAULT 1,
+                UNIQUE(location, topic)
+            )
+        ''')
+
         conn.commit()
         conn.close()
 
@@ -267,6 +283,75 @@ class Database:
             'daily_stats': daily_stats,
             'alert_stats': alert_stats
         }
+
+    def update_issue_cluster(self, location: str, topic: str, alert_level: str = 'low'):
+        """更新或创建问题集群，计算升级风险指数"""
+        if not location or not topic:
+            return
+
+        conn = self._get_conn()
+        cursor = conn.cursor()
+
+        now = __import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # 层级风险权重
+        level_weight = {'high': 3, 'medium': 2, 'low': 1}.get(alert_level, 1)
+
+        cursor.execute('''
+            INSERT INTO issue_clusters (location, topic, message_count, first_at, last_at, risk_score, risk_level)
+            VALUES (?, ?, 1, ?, ?, ?, ?)
+            ON CONFLICT(location, topic) DO UPDATE SET
+                message_count = message_count + 1,
+                last_at = ?,
+                risk_score = risk_score + ?,
+                risk_level = CASE
+                    WHEN risk_score + ? >= 10 THEN 'high'
+                    WHEN risk_score + ? >= 5 THEN 'medium'
+                    ELSE 'low'
+                END
+        ''', (location, topic, now, now, level_weight, 'low', now, level_weight, level_weight, level_weight))
+
+        # 重新计算时间衰减因子（24小时内的给予额外加权）
+        cursor.execute('''
+            UPDATE issue_clusters
+            SET risk_score = risk_score * 1.5
+            WHERE location = ? AND topic = ?
+              AND last_at >= datetime('now', '-1 day')
+              AND message_count >= 2
+        ''', (location, topic))
+
+        conn.commit()
+        conn.close()
+
+    def get_issue_clusters(self, active_only: bool = True) -> list:
+        """获取问题集群列表（按风险指数降序）"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+
+        if active_only:
+            cursor.execute('''
+                SELECT * FROM issue_clusters WHERE is_active = 1
+                ORDER BY risk_score DESC
+            ''')
+        else:
+            cursor.execute('SELECT * FROM issue_clusters ORDER BY risk_score DESC')
+
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_escalation_risk_stats(self) -> dict:
+        """获取升级风险统计"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT risk_level, COUNT(*) as count, SUM(risk_score) as total_score
+            FROM issue_clusters WHERE is_active = 1
+            GROUP BY risk_level
+        ''')
+        rows = cursor.fetchall()
+        conn.close()
+        return {row['risk_level']: {'count': row['count'], 'score': row['total_score']} for row in rows}
 
 
 # 全局实例

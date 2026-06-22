@@ -34,6 +34,8 @@ class LLMService:
 {{
     "category": "分类（urgent/complaint/repair/consult/chat/other）",
     "summary": "一句话摘要",
+    "location": "消息涉及的具体地点（如6栋、3单元、小区门口、游泳池等），没有则填null",
+    "topic": "消息涉及的核心问题类型（如电梯故障、漏水、噪音、报修、咨询等），没有则填null",
     "need_alert": true/false,
     "alert_level": "high/medium/low",
     "suggested_action": "建议处理方式"
@@ -70,6 +72,8 @@ class LLMService:
             return {
                 "category": "other",
                 "summary": message[:50],
+                "location": None,
+                "topic": None,
                 "need_alert": False,
                 "alert_level": "low",
                 "suggested_action": "人工复核"

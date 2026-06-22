@@ -88,6 +88,12 @@ class FeishuBotSDK:
                 alert_content=f"[{analysis['category']}] {analysis['summary']}"
             )
 
+        # 更新冲突聚合（行为预测引擎）
+        location = analysis.get("location")
+        topic = analysis.get("topic")
+        if location and topic and analysis.get("category") in ('urgent', 'complaint', 'repair'):
+            db.update_issue_cluster(location, topic, analysis.get("alert_level", "low"))
+
         # 仅 @ 机器人的消息才生成回复
         if is_mention:
             try:
