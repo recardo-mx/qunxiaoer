@@ -52,3 +52,4 @@ temp/
 # Playwright
 .playwright-mcp/
 *.png
+!docs/*.png

@@ -23,7 +23,7 @@
 │                                                             │
 │   ┌──────────┐      ┌──────────────┐      ┌──────────────┐ │
 │   │ 飞书群   │ ──── │ 飞书机器人   │ ──── │  后端服务    │ │
-│   │ (居民)   │      │ (Webhook)    │      │  (Flask)     │ │
+│   │ (居民)   │      │ (SDK长连接)  │      │  (Python)    │ │
 │   └──────────┘      └──────────────┘      └──────┬───────┘ │
 │                                                   │         │
 │                              ┌────────────────────┼───────┐ │
@@ -31,13 +31,13 @@
 │                              ▼                    ▼       │ │
 │                       ┌──────────────┐     ┌───────────┐  │ │
 │                       │  LLM服务     │     │  SQLite   │  │ │
-│                       │ (Ollama/API) │     │  数据库   │  │ │
+│                       │ (DeepSeek)   │     │  数据库   │  │ │
 │                       └──────────────┘     └───────────┘  │ │
 │                              │                             │ │
 │                              ▼                             │ │
 │                       ┌──────────────┐                     │ │
 │                       │  管理后台    │                     │ │
-│                       │ (Streamlit)  │                     │ │
+│                       │  (NiceGUI)   │                     │ │
 │                       └──────────────┘                     │ │
 │                                                            │ │
 └────────────────────────────────────────────────────────────┘ │
@@ -52,15 +52,18 @@
 | 飞书机器人 | `src/feishu_bot.py` | 消息监听、事件处理（Webhook模式） |
 | 飞书机器人SDK | `src/feishu_bot_sdk.py` | 消息监听、事件处理（SDK长连接模式） |
 | 数据库 | `src/database.py` | SQLite数据存储 |
-| 管理后台 | `src/web_admin.py` | Streamlit Web界面 |
+| 管理后台 (Web) | `src/web_nicegui.py` | NiceGUI Web界面 (ECharts图表) |
+| 管理后台 (桌面) | `src/desktop_gui.py` | Tkinter原生桌面GUI |
 | 主程序 | `src/main.py` | 程序入口 |
 
 ### 技术栈
 
-- **后端**：Python 3.10+, Flask
-- **LLM**：Ollama (本地) / 通义千问API (云端)
+- **后端**：Python 3.10+
+- **LLM**：DeepSeek API (也支持Ollama本地 / 通义千问)
 - **数据库**：SQLite
-- **前端**：Streamlit / NiceGUI
+- **前端**：NiceGUI (Web) + Tkinter (桌面)
+- **图表**：ECharts
+- **消息平台**：飞书开放平台 (SDK长连接)
 - **消息平台**：飞书开放平台（支持Webhook和SDK两种接入方式）
 
 ## 快速开始
@@ -213,6 +216,16 @@ python src/main.py all
 - 预警：否
 - 自动回复：已收到您的投诉。根据规定，周末禁止进行产生噪音的装修作业。我们将通知物业进行劝阻，请您保留相关证据。
 
+## 界面截图
+
+| 数据概览 | 消息记录 | 预警管理 |
+|----------|----------|----------|
+| ![](docs/screenshot-overview.png) | ![](docs/screenshot-messages.png) | ![](docs/screenshot-alerts.png) |
+
+| 统计分析 | 飞书接入 |
+|----------|----------|
+| ![](docs/screenshot-stats.png) | ![](docs/screenshot-feishu.png) |
+
 ## 功能特性
 
 ### 智能分拣
@@ -235,10 +248,12 @@ python src/main.py all
 
 ### 管理后台
 
-- 实时数据概览
-- 消息记录查询
-- 预警管理
-- 统计分析
+- 实时数据概览（ECharts饼图 + 时间选择器）
+- 消息记录查询（关键词搜索 + 分类筛选 + 分页 + 可展开卡片）
+- 预警管理（全部/未处理/已处理筛选 + 详情弹窗 + 一键批量处理）
+- 统计分析（饼图 + 柱状图 + 趋势折线图 + CSV导出）
+- 功能测试（AI分析 + 测试历史记录）
+- 飞书接入（配置编辑 + 连接验证 + 启停控制 + 日志）
 
 ## 测试
 
@@ -260,16 +275,20 @@ python tests/test_analysis.py
 qunxiaoer/
 ├── src/
 │   ├── config.py          # 配置管理
-│   ├── llm_service.py     # LLM服务
-│   ├── feishu_bot.py      # 飞书机器人
-│   ├── database.py        # 数据库
-│   ├── web_admin.py       # 管理后台
-│   └── main.py            # 主程序
+│   ├── llm_service.py     # LLM服务 (DeepSeek/Ollama/通义千问)
+│   ├── feishu_bot.py      # 飞书机器人 (Webhook模式)
+│   ├── feishu_bot_sdk.py  # 飞书机器人 (SDK长连接模式)
+│   ├── database.py        # SQLite数据库
+│   ├── web_nicegui.py     # NiceGUI管理后台
+│   ├── web_admin.py       # Streamlit管理后台
+│   ├── desktop_gui.py     # Tkinter桌面GUI
+│   └── main.py            # 主程序入口
 ├── data/
 │   └── sample_messages.json  # 示例数据
 ├── docs/                  # 文档
 ├── requirements.txt       # 依赖
 ├── .env.example          # 配置示例
+├── run.bat / run.sh      # 一键启动脚本
 └── README.md             # 项目说明
 ```
 
@@ -318,12 +337,12 @@ LLM返回格式不稳定，有时包含额外文字。
 
 ## 后续改进方向
 
-1. **知识库增强**：接入RAG，支持政策文档问答
-2. **多群管理**：支持多个群同时监听
-3. **消息去重**：避免重复处理同一条消息
-4. **人工复核**：重要预警需人工确认
-5. **数据分析**：更丰富的统计报表
-6. **自动回复**：根据分类自动回复居民
+1. ✅ **消息去重**：已实现 message_exists 去重机制
+2. ✅ **自动回复**：已根据消息分类智能生成回复
+3. ✅ **数据分析**：已增加 ECharts 图表 + CSV导出
+4. ✅ **人工复核**：预警管理支持详情弹窗和批量处理
+5. 🔜 **知识库增强**：接入RAG，支持政策文档问答
+6. 🔜 **多群管理**：支持多个群同时监听
 
 ## 评分标准对应
 
