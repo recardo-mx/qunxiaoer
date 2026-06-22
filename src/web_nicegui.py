@@ -660,27 +660,27 @@ def show_alerts_tab():
         filter_state = {'value': 'pending'}
         
         with ui.row().classes('gap-2 mb-6'):
-            for state_id, label in [('all', '全部'), ('pending', '未处理'), ('handled', '已处理')]:
-                btn = ui.button(label, on_click=lambda s=state_id: switch_filter(s))
-                if state_id == 'pending':
-                    btn.props('unelevated').style(f'background: {PRIMARY} !important; color: white !important;')
-                    btn.classes('text-xs')
-                else:
-                    btn.props('outline').style(f'color: {GRAY_600}; border-color: {GRAY_300};')
-                    btn.classes('text-xs')
-                filter_state[f'btn_{state_id}'] = btn
+            all_btn = ui.button('全部', on_click=lambda: switch_filter('all'))
+            pending_btn = ui.button('未处理', on_click=lambda: switch_filter('pending'))
+            handled_btn = ui.button('已处理', on_click=lambda: switch_filter('handled'))
+            pending_btn.props('unelevated').style(f'background: {PRIMARY} !important; color: white !important;')
+            all_btn.props('outline').style(f'color: {GRAY_600};')
+            handled_btn.props('outline').style(f'color: {GRAY_600};')
+            filter_state['btn_all'] = all_btn
+            filter_state['btn_pending'] = pending_btn
+            filter_state['btn_handled'] = handled_btn
 
         alerts_container = ui.column().classes('w-full')
 
         def switch_filter(state):
             filter_state['value'] = state
-            for sid in ['all', 'pending', 'handled']:
-                btn = filter_state.get(f'btn_{sid}')
+            for sid, btn_key in [('all', 'btn_all'), ('pending', 'btn_pending'), ('handled', 'btn_handled')]:
+                btn = filter_state.get(btn_key)
                 if btn:
                     if sid == state:
                         btn.props('unelevated').style(f'background: {PRIMARY} !important; color: white !important;')
                     else:
-                        btn.props('outline').style(f'color: {GRAY_600}; border-color: {GRAY_300};')
+                        btn.props('outline').style(f'color: {GRAY_600};')
             refresh_alerts()
 
         def refresh_alerts():
@@ -701,6 +701,7 @@ def show_alerts_tab():
                         level_labels = {'high': '紧急', 'medium': '警告', 'low': '提示'}
                         color = level_colors.get(level, GRAY_500)
                         label_text = level_labels.get(level, '未知')
+                        aid = alert['id']
 
                         with ui.card().classes(f'alert-item alert-{level} p-4 mb-3').style(f'border-radius: 8px; border: none; background: white;'):
                             with ui.row().classes('items-center justify-between'):
@@ -715,27 +716,29 @@ def show_alerts_tab():
                                 if not alert['is_handled']:
                                     with ui.row().classes('gap-2'):
                                         ui.button('详情', on_click=lambda a=alert: show_alert_detail(a)).props('flat').style(f'color: {PRIMARY};')
-                                        ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props('unelevated').style(f'background: {color} !important; color: white !important;')
+                                        ui.button('标记处理', on_click=lambda a=alert: handle_alert(aid)).props('unelevated').style(f'background: {color} !important; color: white !important;')
                 else:
                     with ui.column().classes('empty-state'):
                         ui.label('暂无预警').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
 
         def show_alert_detail(alert):
-            with ui.dialog() as dialog, ui.card().classes('p-6').style('max-width: 500px;'):
-                level = alert['alert_level'] or 'low'
-                level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
-                ui.label('预警详情').style(f'font-size: 18px; font-weight: 700; color: {GRAY_800}; margin-bottom: 16px;')
-                ui.label(f'等级: {level}').style(f'color: {level_colors.get(level, GRAY_500)}; font-weight: 600;')
-                ui.label(f'内容: {alert.get("alert_content", "-")}').style(f'font-size: 14px; color: {GRAY_700};')
-                ui.separator()
-                ui.label('原始消息:').style(f'font-size: 13px; font-weight: 600; color: {GRAY_500};')
-                ui.label((alert.get('content') or '-')).style(f'font-size: 13px; color: {GRAY_600}; white-space: pre-wrap;')
-                ui.label(f'发送者: {alert.get("sender_name", "-")}').style(f'font-size: 12px; color: {GRAY_400};')
-                ui.label(f'时间: {alert["created_at"][:16]}').style(f'font-size: 12px; color: {GRAY_400};')
-                if not alert['is_handled']:
-                    ui.button('标记为已处理', on_click=lambda: [handle_alert(alert['id']), dialog.close()]).props(f'color={PRIMARY}')
-                ui.button('关闭', on_click=dialog.close).props('flat')
-            dialog.open()
+            d = ui.dialog()
+            with d:
+                with ui.card().classes('p-6').style('max-width: 500px;'):
+                    ui.label('预警详情').style(f'font-size: 18px; font-weight: 700; color: {GRAY_800}; margin-bottom: 16px;')
+                    level = alert['alert_level'] or 'low'
+                    level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
+                    ui.label(f'等级: {level}').style(f'color: {level_colors.get(level, GRAY_500)}; font-weight: 600;')
+                    ui.label(f'内容: {alert.get("alert_content", "-")}').style(f'font-size: 14px; color: {GRAY_700};')
+                    ui.separator()
+                    ui.label('原始消息:').style(f'font-size: 13px; font-weight: 600; color: {GRAY_500};')
+                    ui.label((alert.get('content') or '-')).style(f'font-size: 13px; color: {GRAY_600}; white-space: pre-wrap;')
+                    ui.label(f'发送者: {alert.get("sender_name", "-")}').style(f'font-size: 12px; color: {GRAY_400};')
+                    ui.label(f'时间: {alert["created_at"][:16]}').style(f'font-size: 12px; color: {GRAY_400};')
+                    if not alert['is_handled']:
+                        ui.button('标记为已处理', on_click=lambda: [handle_alert(alert['id']), d.close()]).props(f'color={PRIMARY}')
+                    ui.button('关闭', on_click=lambda: d.close()).props('flat')
+            d.open()
 
         # 批量处理按钮
         with ui.row().classes('w-full justify-end mt-2'):
