@@ -139,6 +139,60 @@ class Database:
         conn.close()
         return [dict(row) for row in rows]
 
+    def search_messages(self, keyword: str = None, category: str = None,
+                        page: int = 1, page_size: int = 20) -> Dict:
+        """搜索消息（支持关键词、分类筛选、分页）"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+
+        conditions = []
+        params = []
+
+        if keyword:
+            conditions.append("(content LIKE ? OR summary LIKE ?)")
+            params.extend([f'%{keyword}%', f'%{keyword}%'])
+
+        if category and category != '全部':
+            cat_key = category
+            for k, v in config.CATEGORIES.items():
+                if v == category:
+                    cat_key = k
+                    break
+            conditions.append("category = ?")
+            params.append(cat_key)
+
+        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+        # Count total
+        cursor.execute(f'SELECT COUNT(*) FROM messages {where_clause}', params)
+        total = cursor.fetchone()[0]
+
+        # Fetch page
+        offset = (page - 1) * page_size
+        cursor.execute(f'''
+            SELECT * FROM messages {where_clause}
+            ORDER BY created_at DESC LIMIT ? OFFSET ?
+        ''', params + [page_size, offset])
+
+        rows = cursor.fetchall()
+        conn.close()
+        return {
+            'items': [dict(row) for row in rows],
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': max(1, (total + page_size - 1) // page_size)
+        }
+
+    def get_message_count(self) -> int:
+        """获取消息总数"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM messages')
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+
     def get_alerts(self, is_handled: int = None) -> List[Dict]:
         """获取预警列表"""
         conn = self._get_conn()

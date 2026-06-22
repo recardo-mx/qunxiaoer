@@ -502,61 +502,78 @@ def show_dashboard():
 
 
 def show_overview_tab():
-    stats = db.get_stats(days=7)
-    alert_total = stats['alert_stats'].get('total', 0)
-    alert_handled = stats['alert_stats'].get('handled', 0)
-    handle_rate = f"{alert_handled / alert_total * 100:.0f}%" if alert_total > 0 else '0%'
+    # 时间范围选择
+    time_range = ui.select(['本周', '本月', '全部'], value='本周', label='时间范围').classes('w-32 mb-4')
+    
+    def get_days():
+        return {'本周': 7, '本月': 30, '全部': 365}[time_range.value]
 
-    stat_data = [
-        ('本周消息', str(sum(stats['category_stats'].values())), '全部消息', PRIMARY),
-        ('紧急诉求', str(stats['category_stats'].get('urgent', 0)), '需要立即处理', DANGER),
-        ('预警总数', str(alert_total), '待处理预警', WARNING),
-        ('处理率', handle_rate, '已处理占比', SUCCESS),
-    ]
+    def refresh_overview():
+        stats = db.get_stats(days=get_days())
+        alert_total = stats['alert_stats'].get('total', 0)
+        alert_handled = stats['alert_stats'].get('handled', 0)
+        handle_rate = f"{alert_handled / alert_total * 100:.0f}%" if alert_total > 0 else '0%'
+        total_msgs = sum(stats['category_stats'].values())
+        urgent_count = stats['category_stats'].get('urgent', 0)
 
-    with ui.row().classes('w-full gap-4 mb-6'):
-        for title, value, subtitle, color in stat_data:
-            with ui.card().classes('stat-card flex-1 p-5'):
-                ui.label(title).style(f'font-size: 13px; color: {GRAY_500}; font-weight: 500;')
-                ui.label(value).style(f'font-size: 28px; font-weight: 700; color: {color}; margin: 8px 0 4px;')
-                ui.label(subtitle).style(f'font-size: 12px; color: {GRAY_400};')
+        # KPI 卡片
+        overview_content.clear()
+        with overview_content:
+            with ui.row().classes('w-full gap-4 mb-6'):
+                for title, value, subtitle, color in [
+                    (f'{time_range.value}消息', str(total_msgs), '全部消息', PRIMARY),
+                    ('紧急诉求', str(urgent_count), '需要立即处理', DANGER),
+                    ('预警总数', str(alert_total), '待处理预警', WARNING),
+                    ('处理率', handle_rate, '已处理占比', SUCCESS),
+                ]:
+                    with ui.card().classes('stat-card flex-1 p-5'):
+                        ui.label(title).style(f'font-size: 13px; color: {GRAY_500}; font-weight: 500;')
+                        ui.label(value).style(f'font-size: 28px; font-weight: 700; color: {color}; margin: 8px 0 4px;')
+                        ui.label(subtitle).style(f'font-size: 12px; color: {GRAY_400};')
 
-    with ui.row().classes('w-full gap-6'):
-        # 消息分类分布
-        with ui.card().classes('content-card flex-1 p-6'):
-            ui.label('消息分类分布').classes('section-title')
+            with ui.row().classes('w-full gap-6'):
+                # 分类饼图
+                with ui.card().classes('content-card flex-1 p-6'):
+                    ui.label('消息分类分布').classes('section-title')
+                    if stats['category_stats']:
+                        pie_data = [{'name': config.CATEGORIES.get(k, k), 'value': v} for k, v in stats['category_stats'].items()]
+                        ui.echart({
+                            'tooltip': {'trigger': 'item'},
+                            'legend': {'orient': 'vertical', 'left': 'left', 'textStyle': {'fontSize': 12}},
+                            'series': [{
+                                'type': 'pie', 'radius': ['40%', '70%'], 'center': ['55%', '50%'],
+                                'data': pie_data,
+                                'label': {'show': True, 'formatter': '{b}\n{d}%'},
+                                'emphasis': {'itemStyle': {'shadowBlur': 10, 'shadowOffsetX': 0, 'shadowColor': 'rgba(0,0,0,0.5)'}}
+                            }]
+                        }).classes('w-full').style('height: 300px')
+                    else:
+                        with ui.column().classes('empty-state'):
+                            ui.label('暂无数据').style(f'font-size: 14px; color: {GRAY_400};')
 
-            if stats['category_stats']:
-                max_count = max(stats['category_stats'].values())
-                for category, count in stats['category_stats'].items():
-                    label = config.CATEGORIES.get(category, category)
-                    ratio = count / max_count if max_count > 0 else 0
-                    with ui.row().classes('items-center gap-3 mb-3'):
-                        ui.label(label).style(f'width: 72px; font-size: 13px; color: {GRAY_600};')
-                        ui.linear_progress(value=ratio, show_value=False).classes('flex-1').props(f'color={PRIMARY}')
-                        ui.label(str(count)).style(f'width: 32px; text-align: right; font-size: 13px; font-weight: 600; color: {GRAY_700};')
-            else:
-                with ui.column().classes('empty-state'):
-                    ui.label('暂无数据').style(f'font-size: 14px; color: {GRAY_400};')
+                # 最近预警
+                with ui.card().classes('content-card flex-1 p-6'):
+                    ui.label('最近预警').classes('section-title')
+                    alerts = db.get_alerts(is_handled=0)[:5]
+                    if alerts:
+                        for alert in alerts:
+                            level = alert['alert_level'] or 'low'
+                            level_class = f'alert-{level}'
+                            level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
+                            with ui.card().classes(f'alert-item {level_class} p-3 mb-2').style(f'border-radius: 8px; border: none; background: {GRAY_50};'):
+                                with ui.row().classes('items-center justify-between'):
+                                    with ui.column().classes('flex-1'):
+                                        badge_color = level_colors.get(level, GRAY_500)
+                                        ui.label(alert['alert_content'][:50]).style(f'font-size: 13px; font-weight: 500; color: {GRAY_800};')
+                                        ui.label(f"{alert['sender_name']}  {alert['created_at'][:16]}").style(f'font-size: 12px; color: {GRAY_400};')
+                                    ui.button('处理', on_click=lambda a=alert: handle_alert(a['id'])).props('size=sm flat').style(f'color: {PRIMARY};')
+                    else:
+                        with ui.column().classes('empty-state'):
+                            ui.label('暂无待处理预警').style(f'font-size: 14px; color: {GRAY_400};')
 
-        # 最近预警
-        with ui.card().classes('content-card flex-1 p-6'):
-            ui.label('最近预警').classes('section-title')
-
-            alerts = db.get_alerts(is_handled=0)[:5]
-            if alerts:
-                for alert in alerts:
-                    level = alert['alert_level'] or 'low'
-                    level_class = f'alert-{level}' if level in ['high', 'medium', 'low'] else 'alert-low'
-                    with ui.card().classes(f'alert-item {level_class} p-3 mb-2').style(f'border-radius: 8px; border: none; background: {GRAY_50};'):
-                        with ui.row().classes('items-center justify-between'):
-                            with ui.column().classes('flex-1'):
-                                ui.label(alert['alert_content'][:40]).style(f'font-size: 13px; font-weight: 500; color: {GRAY_800};')
-                                ui.label(f"{alert['sender_name']}  {alert['created_at'][:16]}").style(f'font-size: 12px; color: {GRAY_400}; margin-top: 2px;')
-                            ui.button('处理', on_click=lambda a=alert: handle_alert(a['id'])).props('size=sm flat').style(f'color: {PRIMARY};')
-            else:
-                with ui.column().classes('empty-state'):
-                    ui.label('暂无待处理预警').style(f'font-size: 14px; color: {GRAY_400};')
+    time_range.on('change', lambda _: refresh_overview())
+    overview_content = ui.column().classes('w-full')
+    refresh_overview()
 
 
 def handle_alert(alert_id):
@@ -567,103 +584,209 @@ def handle_alert(alert_id):
 
 def show_messages_tab():
     with ui.card().classes('content-card p-6'):
-        with ui.row().classes('w-full items-center justify-between mb-6'):
-            ui.label('消息记录').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800};')
-            with ui.row().classes('gap-3'):
-                ui.select(
-                    ['全部'] + list(config.CATEGORIES.values()),
-                    value='全部',
-                    label='分类筛选'
-                ).classes('w-48')
-                ui.button('刷新', icon='refresh', on_click=lambda: ui.navigate.to('/')).props('outline').style(f'color: {PRIMARY};')
+        ui.label('消息记录').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 16px;')
+        
+        # 搜索 + 筛选行
+        with ui.row().classes('w-full gap-3 mb-4'):
+            search_input = ui.input('关键词搜索', placeholder='搜索消息内容...').classes('flex-1').props('clearable')
+            cat_select = ui.select(['全部'] + list(config.CATEGORIES.values()), value='全部', label='分类').classes('w-36')
+            ui.button('搜索', icon='search', on_click=lambda: refresh_messages()).props(f'color={PRIMARY}')
 
-        messages = db.get_messages(limit=100)
-        if messages:
-            columns = [
-                {'name': 'time', 'label': '时间', 'field': 'time', 'align': 'left'},
-                {'name': 'sender', 'label': '发送者', 'field': 'sender', 'align': 'left'},
-                {'name': 'content', 'label': '内容', 'field': 'content', 'align': 'left'},
-                {'name': 'category', 'label': '分类', 'field': 'category', 'align': 'center'},
-                {'name': 'summary', 'label': '摘要', 'field': 'summary', 'align': 'left'},
-                {'name': 'level', 'label': '等级', 'field': 'level', 'align': 'center'},
-            ]
+        # 表格容器
+        table_container = ui.column().classes('w-full')
+        pagination_row = ui.row().classes('w-full items-center justify-center gap-2 mt-4')
+        page_label = ui.label('').style(f'font-size: 13px; color: {GRAY_500};')
 
-            rows = []
-            for msg in messages:
-                rows.append({
-                    'time': msg['created_at'][:16],
-                    'sender': msg['sender_name'] or '-',
-                    'content': msg['content'][:50] + ('...' if len(msg['content']) > 50 else ''),
-                    'category': config.CATEGORIES.get(msg['category'], msg['category']),
-                    'summary': msg['summary'] or '-',
-                    'level': msg['alert_level'] or '-'
-                })
+        current_page = {'value': 1}
+        page_size = 15
 
-            ui.table(columns=columns, rows=rows).classes('w-full').props('flat bordered')
-        else:
-            with ui.column().classes('empty-state'):
-                ui.label('暂无消息记录').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
-                ui.label('接入飞书后，消息将自动显示在这里').style(f'font-size: 13px; color: {GRAY_400}; margin-top: 4px;')
+        def refresh_messages():
+            keyword = search_input.value.strip() or None
+            category = cat_select.value
+            page = current_page['value']
+
+            result = db.search_messages(keyword=keyword, category=category, page=page, page_size=page_size)
+            
+            table_container.clear()
+            with table_container:
+                if result['items']:
+                    columns = [
+                        {'name': 'time', 'label': '时间', 'field': 'time', 'align': 'left'},
+                        {'name': 'sender', 'label': '发送者', 'field': 'sender', 'align': 'left'},
+                        {'name': 'content', 'label': '内容', 'field': 'content', 'align': 'left'},
+                        {'name': 'category', 'label': '分类', 'field': 'category', 'align': 'center'},
+                        {'name': 'summary', 'label': '摘要', 'field': 'summary', 'align': 'left'},
+                        {'name': 'level', 'label': '等级', 'field': 'level', 'align': 'center'},
+                    ]
+                    rows = []
+                    for msg in result['items']:
+                        rows.append({
+                            'time': msg['created_at'][:16] if msg['created_at'] else '-',
+                            'sender': msg['sender_name'] or '-',
+                            'content': (msg['content'] or '')[:50] + ('...' if len(msg['content'] or '') > 50 else ''),
+                            'category': config.CATEGORIES.get(msg['category'], msg['category']),
+                            'summary': (msg['summary'] or '-')[:40],
+                            'level': msg['alert_level'] or '-'
+                        })
+                    ui.table(columns=columns, rows=rows).classes('w-full').props('flat bordered dense')
+                else:
+                    with ui.column().classes('empty-state'):
+                        ui.label('未找到匹配的消息').style(f'font-size: 14px; color: {GRAY_400};')
+
+            # 分页
+            page_label.set_text(f'共 {result["total"]} 条  |  第 {page}/{result["total_pages"]} 页')
+            pagination_row.clear()
+            with pagination_row:
+                ui.button(icon='first_page', on_click=lambda: go_page(1)).props('flat round dense').bind_enabled_from(current_page, 'value', lambda v: v > 1)
+                ui.button(icon='chevron_left', on_click=lambda: go_page(page - 1)).props('flat round dense').bind_enabled_from(current_page, 'value', lambda v: v > 1)
+                ui.label(f'{page}/{result["total_pages"]}').style(f'font-size: 13px; color: {GRAY_600}; min-width: 60px; text-align: center;')
+                ui.button(icon='chevron_right', on_click=lambda: go_page(page + 1)).props('flat round dense').bind_enabled_from(current_page, 'value', lambda v: v < result['total_pages'])
+                ui.button(icon='last_page', on_click=lambda: go_page(result['total_pages'])).props('flat round dense').bind_enabled_from(current_page, 'value', lambda v: v < result['total_pages'])
+
+        def go_page(p):
+            current_page['value'] = max(1, min(p, 999))
+            refresh_messages()
+
+        refresh_messages()
 
 
 def show_alerts_tab():
     with ui.card().classes('content-card p-6'):
-        ui.label('预警管理').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 24px;')
+        ui.label('预警管理').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 16px;')
 
-        alerts = db.get_alerts(is_handled=0)
-        if alerts:
-            for alert in alerts:
-                level = alert['alert_level'] or 'low'
-                level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
-                level_labels = {'high': '紧急', 'medium': '警告', 'low': '提示'}
-                color = level_colors.get(level, GRAY_500)
-                label_text = level_labels.get(level, '未知')
+        # 状态筛选标签
+        filter_state = {'value': 'pending'}
+        
+        with ui.row().classes('gap-2 mb-6'):
+            for state_id, label in [('all', '全部'), ('pending', '未处理'), ('handled', '已处理')]:
+                btn = ui.button(label, on_click=lambda s=state_id: switch_filter(s))
+                if state_id == 'pending':
+                    btn.props(f'color={PRIMARY}').style('color: white !important;')
+                    btn.classes('text-xs')
+                else:
+                    btn.props('outline').style(f'color: {GRAY_600};')
+                    btn.classes('text-xs')
+                filter_state[f'btn_{state_id}'] = btn
 
-                with ui.card().classes(f'alert-item alert-{level} p-4 mb-3').style(f'border-radius: 8px; border: none; background: white;'):
-                    with ui.row().classes('items-center justify-between'):
-                        with ui.column().classes('flex-1'):
-                            with ui.row().classes('items-center gap-2 mb-2'):
-                                ui.label(label_text).style(f'font-size: 12px; font-weight: 600; color: white; background: {color}; padding: 2px 10px; border-radius: 12px;')
-                                ui.label(alert['alert_content']).style(f'font-size: 14px; font-weight: 600; color: {GRAY_800};')
-                            ui.label(alert['content'][:100]).style(f'font-size: 13px; color: {GRAY_600}; margin-bottom: 4px;')
-                            ui.label(f"{alert['sender_name']}  {alert['created_at'][:16]}").style(f'font-size: 12px; color: {GRAY_400};')
-                            ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props(f'color={color}').style('color: white !important;')
-        else:
-            with ui.column().classes('empty-state'):
-                ui.label('暂无待处理预警').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
-                ui.label('所有预警已处理完毕').style(f'font-size: 13px; color: {GRAY_400}; margin-top: 4px;')
+        alerts_container = ui.column().classes('w-full')
+
+        def switch_filter(state):
+            filter_state['value'] = state
+            for sid in ['all', 'pending', 'handled']:
+                btn = filter_state.get(f'btn_{sid}')
+                if btn:
+                    if sid == state:
+                        btn.props(f'color={PRIMARY}').style('color: white !important;')
+                    else:
+                        btn.props('outline').style(f'color: {GRAY_600};')
+            refresh_alerts()
+
+        def refresh_alerts():
+            state = filter_state['value']
+            if state == 'all':
+                alerts = db.get_alerts()
+            elif state == 'handled':
+                alerts = db.get_alerts(is_handled=1)
+            else:
+                alerts = db.get_alerts(is_handled=0)
+
+            alerts_container.clear()
+            with alerts_container:
+                if alerts:
+                    for alert in alerts:
+                        level = alert['alert_level'] or 'low'
+                        level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
+                        level_labels = {'high': '紧急', 'medium': '警告', 'low': '提示'}
+                        color = level_colors.get(level, GRAY_500)
+                        label_text = level_labels.get(level, '未知')
+
+                        with ui.card().classes(f'alert-item alert-{level} p-4 mb-3').style(f'border-radius: 8px; border: none; background: white;'):
+                            with ui.row().classes('items-center justify-between'):
+                                with ui.column().classes('flex-1'):
+                                    with ui.row().classes('items-center gap-2 mb-2'):
+                                        ui.label(label_text).style(f'font-size: 12px; font-weight: 600; color: white; background: {color}; padding: 2px 10px; border-radius: 12px;')
+                                        if alert['is_handled']:
+                                            ui.label('已处理').style(f'font-size: 12px; color: {SUCCESS}; background: {SUCCESS_LIGHT}; padding: 2px 10px; border-radius: 12px;')
+                                        ui.label(alert['alert_content']).style(f'font-size: 14px; font-weight: 600; color: {GRAY_800};')
+                                    ui.label((alert.get('content') or '')[:100]).style(f'font-size: 13px; color: {GRAY_600}; margin-bottom: 4px;')
+                                    ui.label(f"{alert.get('sender_name', '-')}  {alert['created_at'][:16]}").style(f'font-size: 12px; color: {GRAY_400};')
+                                if not alert['is_handled']:
+                                    ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props(f'color={color}').style('color: white !important;')
+                else:
+                    with ui.column().classes('empty-state'):
+                        ui.label('暂无预警').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
+
+        refresh_alerts()
 
 
 def show_stats_tab():
-    stats = db.get_stats(days=7)
+    stats = db.get_stats(days=30)
+    cat_colors = {'urgent': DANGER, 'complaint': WARNING, 'repair': '#8B5CF6', 'consult': '#06B6D4', 'chat': '#6B7280', 'other': GRAY_400, 'test': '#EC4899'}
 
     with ui.card().classes('content-card p-6'):
-        ui.label('统计分析').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 24px;')
+        with ui.row().classes('w-full items-center justify-between mb-6'):
+            ui.label('统计分析').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800};')
+            time_range = ui.select(['最近7天', '最近30天'], value='最近30天', label='时间范围').classes('w-32')
 
-        if stats['category_stats']:
-            with ui.row().classes('w-full gap-6'):
-                with ui.column().classes('flex-1'):
-                    ui.label('消息分类占比').style(f'font-size: 14px; font-weight: 600; color: {GRAY_700}; margin-bottom: 16px;')
-                    for category, count in stats['category_stats'].items():
-                        label = config.CATEGORIES.get(category, category)
-                        ratio = count / max(stats['category_stats'].values())
-                        with ui.card().classes('p-3 mb-2').style(f'border-radius: 8px; border: 1px solid {GRAY_200};'):
-                            with ui.row().classes('items-center gap-3'):
-                                ui.label(label).style(f'width: 80px; font-size: 13px; color: {GRAY_600};')
-                                ui.linear_progress(value=ratio, show_value=True).classes('flex-1').props(f'color={PRIMARY}')
-                                ui.label(str(count)).style(f'width: 32px; text-align: right; font-size: 13px; font-weight: 600;')
+        charts_container = ui.column().classes('w-full')
 
-                with ui.column().classes('flex-1'):
-                    ui.label('分类详情').style(f'font-size: 14px; font-weight: 600; color: {GRAY_700}; margin-bottom: 16px;')
-                    with ui.card().classes('p-4').style(f'background: {GRAY_50}; border-radius: 8px; border: 1px solid {GRAY_200};'):
-                        for category, count in stats['category_stats'].items():
-                            label = config.CATEGORIES.get(category, category)
-                            with ui.row().classes('items-center justify-between py-2').style(f'border-bottom: 1px solid {GRAY_200};'):
-                                ui.label(label).style(f'font-size: 13px; color: {GRAY_600};')
-                                ui.label(str(count)).style(f'font-size: 13px; font-weight: 600; color: {PRIMARY};')
-        else:
-            with ui.column().classes('empty-state'):
-                ui.label('暂无统计数据').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
+        def render_charts():
+            days = 7 if time_range.value == '最近7天' else 30
+            stats = db.get_stats(days=days)
+            charts_container.clear()
+
+            with charts_container:
+                if not stats['category_stats'] and not stats['daily_stats']:
+                    with ui.column().classes('empty-state'):
+                        ui.label('暂无统计数据').style(f'font-size: 15px; color: {GRAY_400};')
+                    return
+
+                with ui.row().classes('w-full gap-6 mb-6'):
+                    # 饼图
+                    with ui.card().classes('flex-1 p-4').style('border: 1px solid ' + GRAY_200 + '; border-radius: 12px;'):
+                        ui.label('消息分类占比').style(f'font-size: 14px; font-weight: 600; color: {GRAY_700}; margin-bottom: 8px;')
+                        if stats['category_stats']:
+                            pie_data = []
+                            for k, v in stats['category_stats'].items():
+                                pie_data.append({'name': config.CATEGORIES.get(k, k), 'value': v, 'itemStyle': {'color': cat_colors.get(k, PRIMARY)}})
+                            ui.echart({
+                                'tooltip': {'trigger': 'item', 'formatter': '{b}: {c} ({d}%)'},
+                                'series': [{'type': 'pie', 'radius': '70%', 'data': pie_data, 'label': {'fontSize': 11}}]
+                            }).classes('w-full').style('height: 280px')
+                        else:
+                            ui.label('暂无数据').style(f'font-size: 13px; color: {GRAY_400}; padding: 40px; text-align: center;')
+
+                    # 柱状图
+                    with ui.card().classes('flex-1 p-4').style('border: 1px solid ' + GRAY_200 + '; border-radius: 12px;'):
+                        ui.label('预警等级分布').style(f'font-size: 14px; font-weight: 600; color: {GRAY_700}; margin-bottom: 8px;')
+                        ui.echart({
+                            'tooltip': {'trigger': 'axis'},
+                            'xAxis': {'type': 'category', 'data': ['紧急', '警告', '提示']},
+                            'yAxis': {'type': 'value'},
+                            'series': [{'type': 'bar', 'data': [
+                                {'value': stats['category_stats'].get('urgent', 0), 'itemStyle': {'color': DANGER}},
+                                {'value': stats['category_stats'].get('complaint', 0), 'itemStyle': {'color': WARNING}},
+                                {'value': stats['category_stats'].get('repair', 0) + stats['category_stats'].get('consult', 0), 'itemStyle': {'color': PRIMARY}}
+                            ], 'barWidth': '50%'}]
+                        }).classes('w-full').style('height: 280px')
+
+                # 趋势折线图
+                with ui.card().classes('w-full p-4').style('border: 1px solid ' + GRAY_200 + '; border-radius: 12px;'):
+                    ui.label('每日消息趋势').style(f'font-size: 14px; font-weight: 600; color: {GRAY_700}; margin-bottom: 8px;')
+                    if stats['daily_stats']:
+                        dates = [d['date'][-5:] for d in stats['daily_stats']]
+                        counts = [d['count'] for d in stats['daily_stats']]
+                        ui.echart({
+                            'tooltip': {'trigger': 'axis'},
+                            'xAxis': {'type': 'category', 'data': dates, 'axisLabel': {'fontSize': 10, 'rotate': 30}},
+                            'yAxis': {'type': 'value', 'minInterval': 1},
+                            'series': [{'type': 'line', 'data': counts, 'smooth': True, 'areaStyle': {'color': 'rgba(79,70,229,0.1)'}, 'lineStyle': {'color': PRIMARY}, 'itemStyle': {'color': PRIMARY}}]
+                        }).classes('w-full').style('height: 250px')
+                    else:
+                        ui.label('暂无数据').style(f'font-size: 13px; color: {GRAY_400}; padding: 40px; text-align: center;')
+
+        time_range.on('change', lambda _: render_charts())
+        render_charts()
 
 
 def show_feishu_tab():
@@ -675,46 +798,109 @@ def show_feishu_tab():
 
     feishu_configured = bool(config.FEISHU_APP_ID and config.FEISHU_APP_SECRET and 'your-' not in config.FEISHU_APP_ID)
 
+    # 配置信息卡
     with ui.card().classes('w-full p-6'):
         ui.label('飞书机器人接入').style('font-size: 18px; font-weight: 700; margin-bottom: 16px;')
 
         if feishu_configured:
-            ui.label('已配置').classes('text-positive')
-            ui.label(f'App ID: {config.FEISHU_APP_ID}')
-            ui.label(f'模式: {config.BOT_MODE}')
+            with ui.row().classes('items-center gap-3 mb-4'):
+                ui.label('已配置').style(f'font-size: 13px; font-weight: 600; color: {SUCCESS}; background: {SUCCESS_LIGHT}; padding: 4px 12px; border-radius: 12px;')
+                ui.label(f'模式: {config.BOT_MODE.upper()}').style(f'font-size: 13px; color: {GRAY_600};')
+            
+            with ui.card().classes('w-full').style(f'padding: 16px; background: {GRAY_50}; border-radius: 8px;'):
+                with ui.row().classes('gap-6'):
+                    ui.label(f'App ID: {config.FEISHU_APP_ID}').style(f'font-size: 13px; color: {GRAY_600}; font-family: monospace;')
+            
+            # 配置编辑表单
+            with ui.expansion('修改配置', icon='edit').classes('w-full mt-4'):
+                with ui.column().classes('gap-3'):
+                    app_id_input = ui.input('App ID', value=config.FEISHU_APP_ID).classes('w-full')
+                    app_secret_input = ui.input('App Secret', value=config.FEISHU_APP_SECRET, password=True).classes('w-full')
+                    verify_token_input = ui.input('Verification Token', value=config.FEISHU_VERIFICATION_TOKEN or '').classes('w-full')
+                    encrypt_key_input = ui.input('Encrypt Key', value=config.FEISHU_ENCRYPT_KEY or '', password=True).classes('w-full')
+                    bot_mode_select = ui.select(['sdk', 'webhook'], value=config.BOT_MODE, label='运行模式').classes('w-48')
+                    
+                    async def save_feishu_config():
+                        save_config({
+                            'FEISHU_APP_ID': app_id_input.value,
+                            'FEISHU_APP_SECRET': app_secret_input.value,
+                            'FEISHU_VERIFICATION_TOKEN': verify_token_input.value,
+                            'FEISHU_ENCRYPT_KEY': encrypt_key_input.value,
+                            'BOT_MODE': bot_mode_select.value
+                        })
+                        ui.notify('飞书配置已保存', type='positive')
+                    
+                    ui.button('保存配置', on_click=save_feishu_config, icon='save').props(f'color={PRIMARY}')
         else:
             ui.label('未配置').classes('text-negative')
+            ui.label('请在 .env 文件中配置飞书凭证，或使用上方展开面板填写').style(f'font-size: 13px; color: {GRAY_500}; margin-top: 8px;')
 
+    # 机器人控制 + 连接日志
     with ui.card().classes('w-full p-6 mt-4'):
         ui.label('机器人控制').style('font-size: 18px; font-weight: 700; margin-bottom: 16px;')
 
-        status_text = '运行中' if app_state['bot_running'] else '未启动'
-        ui.label(f'状态: {status_text}')
+        with ui.row().classes('items-center gap-4 mb-4'):
+            status_indicator = ui.label('')
+            log_container = ui.column().classes('w-full')
+            
+            def update_status():
+                status_indicator.clear()
+                if app_state['bot_running']:
+                    with status_indicator:
+                        with ui.row().classes('items-center gap-2'):
+                            ui.icon('circle').style(f'color: {SUCCESS}; font-size: 10px;')
+                            ui.label('机器人运行中').style(f'font-size: 14px; font-weight: 500; color: {SUCCESS};')
+                else:
+                    with status_indicator:
+                        with ui.row().classes('items-center gap-2'):
+                            ui.icon('circle').style(f'color: {GRAY_400}; font-size: 10px;')
+                            ui.label('机器人未启动').style(f'font-size: 14px; font-weight: 500; color: {GRAY_500};')
+            update_status()
 
-        async def start_bot():
-            if not feishu_configured:
-                ui.notify('请先完成飞书配置', type='negative')
-                return
-            try:
-                bot_dir = os.path.dirname(__file__)
-                script = 'feishu_bot_sdk.py' if config.BOT_MODE == 'sdk' else 'feishu_bot.py'
-                subprocess.Popen([sys.executable, script], cwd=bot_dir)
-                app_state['bot_running'] = True
-                ui.notify('机器人已启动', type='positive')
-            except Exception as e:
-                ui.notify(f'启动失败: {e}', type='negative')
+        with ui.row().classes('gap-3'):
+            async def start_bot():
+                if not feishu_configured:
+                    ui.notify('请先完成飞书配置', type='negative')
+                    return
+                try:
+                    bot_dir = os.path.dirname(__file__)
+                    script = 'feishu_bot_sdk.py' if config.BOT_MODE == 'sdk' else 'feishu_bot.py'
+                    proc = subprocess.Popen([sys.executable, script], cwd=bot_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    app_state['bot_process'] = proc
+                    app_state['bot_running'] = True
+                    update_status()
+                    ui.notify('机器人已启动', type='positive')
+                except Exception as e:
+                    ui.notify(f'启动失败: {e}', type='negative')
 
-        async def stop_bot():
-            if app_state['bot_process']:
-                app_state['bot_process'].terminate()
-                app_state['bot_process'] = None
-                app_state['bot_running'] = False
-                ui.notify('机器人已停止', type='info')
-            else:
-                ui.notify('机器人未在运行', type='warning')
+            async def stop_bot():
+                if app_state['bot_process']:
+                    try:
+                        app_state['bot_process'].terminate()
+                    except:
+                        pass
+                    app_state['bot_process'] = None
+                    app_state['bot_running'] = False
+                    update_status()
+                    ui.notify('机器人已停止', type='info')
+                else:
+                    ui.notify('机器人未在运行', type='warning')
 
-        ui.button('启动机器人', on_click=start_bot, icon='play_arrow')
-        ui.button('停止机器人', on_click=stop_bot, icon='stop')
+            ui.button('启动机器人', on_click=start_bot, icon='play_arrow').props(f'color={PRIMARY}')
+            ui.button('停止机器人', on_click=stop_bot, icon='stop').props(f'color={GRAY_600}')
+
+        # 连接日志窗口
+        with ui.expansion('连接状态日志', icon='terminal').classes('w-full mt-4'):
+            log_text = ui.log(max_lines=50).classes('w-full').style(f'height: 200px; font-family: monospace; font-size: 12px; background: {GRAY_900}; color: #E5E7EB; padding: 12px; border-radius: 8px;')
+            log_text.push('等待机器人启动...\n')
+            
+            async def refresh_log():
+                if app_state['bot_process']:
+                    log_text.push(f'[进程 PID: {app_state["bot_process"].pid}]\n')
+                log_text.push(f'[更新时间: {__import__("datetime").datetime.now().strftime("%H:%M:%S")}]\n飞书 App ID: {config.FEISHU_APP_ID}\n运行模式: {config.BOT_MODE}\n')
+            
+            refresh_log()
+            ui.button('刷新日志', on_click=refresh_log, icon='refresh').props('flat').style(f'color: {GRAY_500};')
 
 
 def show_test_tab():
