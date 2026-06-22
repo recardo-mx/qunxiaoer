@@ -610,25 +610,27 @@ def show_messages_tab():
             table_container.clear()
             with table_container:
                 if result['items']:
-                    columns = [
-                        {'name': 'time', 'label': '时间', 'field': 'time', 'align': 'left'},
-                        {'name': 'sender', 'label': '发送者', 'field': 'sender', 'align': 'left'},
-                        {'name': 'content', 'label': '内容', 'field': 'content', 'align': 'left'},
-                        {'name': 'category', 'label': '分类', 'field': 'category', 'align': 'center'},
-                        {'name': 'summary', 'label': '摘要', 'field': 'summary', 'align': 'left'},
-                        {'name': 'level', 'label': '等级', 'field': 'level', 'align': 'center'},
-                    ]
-                    rows = []
                     for msg in result['items']:
-                        rows.append({
-                            'time': msg['created_at'][:16] if msg['created_at'] else '-',
-                            'sender': msg['sender_name'] or '-',
-                            'content': (msg['content'] or '')[:50] + ('...' if len(msg['content'] or '') > 50 else ''),
-                            'category': config.CATEGORIES.get(msg['category'], msg['category']),
-                            'summary': (msg['summary'] or '-')[:40],
-                            'level': msg['alert_level'] or '-'
-                        })
-                    ui.table(columns=columns, rows=rows).classes('w-full').props('flat bordered dense')
+                        cat_label = config.CATEGORIES.get(msg['category'], msg['category'])
+                        level = msg['alert_level'] or ''
+                        level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
+                        level_labels = {'high': '紧急', 'medium': '警告', 'low': '提示'}
+                        time_str = msg['created_at'][:16] if msg['created_at'] else '-'
+                        sender_str = msg['sender_name'] or '-'
+                        
+                        with ui.expansion(f'{time_str} | {sender_str} | {cat_label}', icon='chat').classes('w-full mb-1').style(f'border: 1px solid {GRAY_200}; border-radius: 8px;'):
+                            with ui.column().classes('w-full gap-2 p-2'):
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label('内容:').style(f'font-size: 12px; font-weight: 600; color: {GRAY_500};')
+                                    if level:
+                                        lc = level_colors.get(level, GRAY_500)
+                                        ll = level_labels.get(level, level)
+                                        ui.label(ll).style(f'font-size: 11px; color: {lc}; background: {lc}15; padding: 1px 8px; border-radius: 8px;')
+                                ui.label((msg['content'] or '-')).style(f'font-size: 13px; color: {GRAY_800}; white-space: pre-wrap; line-height: 1.6;')
+                                if msg.get('summary'):
+                                    with ui.row().classes('items-start gap-2'):
+                                        ui.label('摘要:').style(f'font-size: 12px; font-weight: 600; color: {GRAY_500};')
+                                        ui.label(msg['summary']).style(f'font-size: 12px; color: {GRAY_600};')
                 else:
                     with ui.column().classes('empty-state'):
                         ui.label('未找到匹配的消息').style(f'font-size: 14px; color: {GRAY_400};')
@@ -711,10 +713,41 @@ def show_alerts_tab():
                                     ui.label((alert.get('content') or '')[:100]).style(f'font-size: 13px; color: {GRAY_600}; margin-bottom: 4px;')
                                     ui.label(f"{alert.get('sender_name', '-')}  {alert['created_at'][:16]}").style(f'font-size: 12px; color: {GRAY_400};')
                                 if not alert['is_handled']:
-                                    ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props(f'color={color}').style('color: white !important;')
+                                    with ui.row().classes('gap-2'):
+                                        ui.button('详情', on_click=lambda a=alert: show_alert_detail(a)).props('flat').style(f'color: {PRIMARY};')
+                                        ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props(f'color={color}').style('color: white !important;')
                 else:
                     with ui.column().classes('empty-state'):
                         ui.label('暂无预警').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
+
+        def show_alert_detail(alert):
+            with ui.dialog() as dialog, ui.card().classes('p-6').style('max-width: 500px;'):
+                level = alert['alert_level'] or 'low'
+                level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
+                ui.label('预警详情').style(f'font-size: 18px; font-weight: 700; color: {GRAY_800}; margin-bottom: 16px;')
+                ui.label(f'等级: {level}').style(f'color: {level_colors.get(level, GRAY_500)}; font-weight: 600;')
+                ui.label(f'内容: {alert.get("alert_content", "-")}').style(f'font-size: 14px; color: {GRAY_700};')
+                ui.separator()
+                ui.label('原始消息:').style(f'font-size: 13px; font-weight: 600; color: {GRAY_500};')
+                ui.label((alert.get('content') or '-')).style(f'font-size: 13px; color: {GRAY_600}; white-space: pre-wrap;')
+                ui.label(f'发送者: {alert.get("sender_name", "-")}').style(f'font-size: 12px; color: {GRAY_400};')
+                ui.label(f'时间: {alert["created_at"][:16]}').style(f'font-size: 12px; color: {GRAY_400};')
+                if not alert['is_handled']:
+                    ui.button('标记为已处理', on_click=lambda: [handle_alert(alert['id']), dialog.close()]).props(f'color={PRIMARY}')
+                ui.button('关闭', on_click=dialog.close).props('flat')
+            dialog.open()
+
+        # 批量处理按钮
+        with ui.row().classes('w-full justify-end mt-2'):
+            pending_alerts = db.get_alerts(is_handled=0)
+            if pending_alerts:
+                ui.button(f'一键处理全部 ({len(pending_alerts)})', on_click=lambda: batch_handle()).props(f'color={SUCCESS}').style('color: white !important;')
+        
+        def batch_handle():
+            for a in db.get_alerts(is_handled=0):
+                db.handle_alert(a['id'], '管理员')
+            ui.notify(f'已处理所有预警', type='positive')
+            refresh_alerts()
 
         refresh_alerts()
 
@@ -787,6 +820,20 @@ def show_stats_tab():
 
         time_range.on('change', lambda _: render_charts())
         render_charts()
+
+        # CSV 导出
+        async def export_csv():
+            import csv, io
+            d = 7 if time_range.value == '最近7天' else 30
+            s = db.get_stats(days=d)
+            buf = io.StringIO()
+            w = csv.writer(buf)
+            w.writerow(['分类', '数量'])
+            for k, v in s['category_stats'].items():
+                w.writerow([config.CATEGORIES.get(k, k), v])
+            ui.download(buf.getvalue().encode('utf-8-sig'), f'stats_{d}d.csv', 'text/csv')
+        
+        ui.button('导出 CSV', on_click=export_csv, icon='download').props(f'color={SUCCESS}').classes('mt-4')
 
 
 def show_feishu_tab():
@@ -902,6 +949,24 @@ def show_feishu_tab():
             refresh_log()
             ui.button('刷新日志', on_click=refresh_log, icon='refresh').props('flat').style(f'color: {GRAY_500};')
 
+        # 验证连接
+        async def verify_config():
+            try:
+                import lark_oapi as lark
+                client = lark.Client.builder().app_id(config.FEISHU_APP_ID).app_secret(config.FEISHU_APP_SECRET).build()
+                resp = client.auth.v3.tenant_access_token.create()
+                if resp.success():
+                    log_text.push('[验证通过] 飞书凭证有效\n')
+                    ui.notify('飞书连接验证通过', type='positive')
+                else:
+                    log_text.push(f'[验证失败] {resp.msg}\n')
+                    ui.notify(f'验证失败: {resp.msg}', type='negative')
+            except Exception as e:
+                log_text.push(f'[验证错误] {e}\n')
+                ui.notify(f'验证错误: {e}', type='negative')
+        
+        ui.button('验证连接', on_click=verify_config, icon='verified').props(f'color={SUCCESS}').style('color: white !important;')
+
 
 def show_test_tab():
     with ui.card().classes('content-card p-6'):
@@ -953,6 +1018,40 @@ def show_test_tab():
                         ui.label(result.get('suggested_action', '-')).style(f'font-size: 14px; color: {GRAY_800};')
 
         ui.button('开始分析', icon='psychology', on_click=test_analyze).classes('mt-4').props(f'color={PRIMARY}').classes('btn-primary')
+
+        # 测试历史
+        with ui.expansion('测试历史记录', icon='history').classes('w-full mt-6'):
+            history_container = ui.column().classes('w-full')
+            test_history = []
+            
+            original_test = test_analyze
+            
+            async def test_analyze_with_history():
+                await original_test()
+                if test_input.value:
+                    import datetime
+                    result = analyze_message(test_input.value)
+                    test_history.insert(0, {'msg': test_input.value[:80], 'cat': config.CATEGORIES.get(result.get('category'), result.get('category')), 'sum': result.get('summary', '-'), 'time': datetime.datetime.now().strftime('%H:%M:%S')})
+                    if len(test_history) > 20:
+                        test_history.pop()
+                    refresh_history()
+            
+            def refresh_history():
+                history_container.clear()
+                with history_container:
+                    if test_history:
+                        for item in test_history:
+                            with ui.card().classes('w-full p-2 mb-1').style(f'background: {GRAY_50}; border-radius: 6px;'):
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label(item['time']).style(f'font-size: 11px; color: {GRAY_400};')
+                                    ui.label(item['cat']).style(f'font-size: 11px; color: {PRIMARY}; background: {PRIMARY_LIGHT}; padding: 1px 6px; border-radius: 4px;')
+                                ui.label(item['msg']).style(f'font-size: 12px; color: {GRAY_700};')
+                                ui.label(item['sum']).style(f'font-size: 11px; color: {GRAY_500};')
+                    else:
+                        ui.label('暂无测试记录').style(f'font-size: 12px; color: {GRAY_400};')
+            
+            # 替换测试函数
+            test_analyze = test_analyze_with_history
 
 
 if __name__ in {"__main__", "__mp_main__"}:
