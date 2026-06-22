@@ -579,7 +579,6 @@ def show_overview_tab():
 def handle_alert(alert_id):
     db.handle_alert(alert_id, '管理员')
     ui.notify('已标记为已处理', type='positive')
-    ui.navigate.to('/')
 
 
 def show_messages_tab():
