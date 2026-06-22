@@ -663,10 +663,10 @@ def show_alerts_tab():
             for state_id, label in [('all', '全部'), ('pending', '未处理'), ('handled', '已处理')]:
                 btn = ui.button(label, on_click=lambda s=state_id: switch_filter(s))
                 if state_id == 'pending':
-                    btn.props(f'color={PRIMARY}').style('color: white !important;')
+                    btn.props('unelevated').style(f'background: {PRIMARY} !important; color: white !important;')
                     btn.classes('text-xs')
                 else:
-                    btn.props('outline').style(f'color: {GRAY_600};')
+                    btn.props('outline').style(f'color: {GRAY_600}; border-color: {GRAY_300};')
                     btn.classes('text-xs')
                 filter_state[f'btn_{state_id}'] = btn
 
@@ -678,9 +678,9 @@ def show_alerts_tab():
                 btn = filter_state.get(f'btn_{sid}')
                 if btn:
                     if sid == state:
-                        btn.props(f'color={PRIMARY}').style('color: white !important;')
+                        btn.props('unelevated').style(f'background: {PRIMARY} !important; color: white !important;')
                     else:
-                        btn.props('outline').style(f'color: {GRAY_600};')
+                        btn.props('outline').style(f'color: {GRAY_600}; border-color: {GRAY_300};')
             refresh_alerts()
 
         def refresh_alerts():
@@ -715,7 +715,7 @@ def show_alerts_tab():
                                 if not alert['is_handled']:
                                     with ui.row().classes('gap-2'):
                                         ui.button('详情', on_click=lambda a=alert: show_alert_detail(a)).props('flat').style(f'color: {PRIMARY};')
-                                        ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props(f'color={color}').style('color: white !important;')
+                                        ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props('unelevated').style(f'background: {color} !important; color: white !important;')
                 else:
                     with ui.column().classes('empty-state'):
                         ui.label('暂无预警').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
@@ -741,7 +741,7 @@ def show_alerts_tab():
         with ui.row().classes('w-full justify-end mt-2'):
             pending_alerts = db.get_alerts(is_handled=0)
             if pending_alerts:
-                ui.button(f'一键处理全部 ({len(pending_alerts)})', on_click=lambda: batch_handle()).props(f'color={SUCCESS}').style('color: white !important;')
+                ui.button(f'一键处理全部 ({len(pending_alerts)})', on_click=lambda: batch_handle()).props('unelevated').style(f'background: {SUCCESS} !important; color: white !important;')
         
         def batch_handle():
             for a in db.get_alerts(is_handled=0):
@@ -933,8 +933,8 @@ def show_feishu_tab():
                 else:
                     ui.notify('机器人未在运行', type='warning')
 
-            ui.button('启动机器人', on_click=start_bot, icon='play_arrow').props(f'color={PRIMARY}')
-            ui.button('停止机器人', on_click=stop_bot, icon='stop').props(f'color={GRAY_600}')
+            ui.button('启动机器人', on_click=start_bot, icon='play_arrow').props('unelevated').style(f'background: {PRIMARY} !important; color: white !important;')
+            ui.button('停止机器人', on_click=stop_bot, icon='stop').props('unelevated').style(f'background: {GRAY_600} !important; color: white !important;')
 
         # 连接日志窗口
         with ui.expansion('连接状态日志', icon='terminal').classes('w-full mt-4'):
@@ -965,7 +965,7 @@ def show_feishu_tab():
                 log_text.push(f'[验证错误] {e}\n')
                 ui.notify(f'验证错误: {e}', type='negative')
         
-        ui.button('验证连接', on_click=verify_config, icon='verified').props(f'color={SUCCESS}').style('color: white !important;')
+        ui.button('验证连接', on_click=verify_config, icon='verified').props('unelevated').style(f'background: {SUCCESS} !important; color: white !important;')
 
 
 def show_test_tab():
