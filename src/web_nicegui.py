@@ -715,7 +715,7 @@ def show_alerts_tab():
                                 if not alert['is_handled']:
                                     with ui.row().classes('gap-2'):
                                         ui.button('详情', on_click=lambda a=alert: show_alert_detail(a)).props('flat').style(f'color: {PRIMARY};')
-                                        ui.button('标记处理', on_click=lambda a=alert: handle_alert(aid)).props('unelevated').style(f'background: {color} !important; color: white !important;')
+                                        ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props('unelevated').style(f'background: {color} !important; color: white !important;')
                 else:
                     with ui.column().classes('empty-state'):
                         ui.label('暂无预警').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
