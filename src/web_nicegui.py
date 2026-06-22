@@ -1,0 +1,777 @@
+"""群小二 - 管理后台"""
+import sys
+import os
+import subprocess
+sys.path.insert(0, os.path.dirname(__file__))
+
+from nicegui import ui
+from config import config
+from database import db
+
+# 主题色
+PRIMARY = '#4F46E5'
+PRIMARY_LIGHT = '#EEF2FF'
+PRIMARY_DARK = '#3730A3'
+SUCCESS = '#059669'
+SUCCESS_LIGHT = '#D1FAE5'
+WARNING = '#D97706'
+WARNING_LIGHT = '#FEF3C7'
+DANGER = '#DC2626'
+DANGER_LIGHT = '#FEE2E2'
+GRAY_50 = '#F9FAFB'
+GRAY_100 = '#F3F4F6'
+GRAY_200 = '#E5E7EB'
+GRAY_400 = '#9CA3AF'
+GRAY_500 = '#6B7280'
+GRAY_600 = '#4B5563'
+GRAY_700 = '#374151'
+GRAY_800 = '#1F2937'
+GRAY_900 = '#111827'
+
+app_state = {
+    'configured': False,
+    'llm_mode': None,
+    'bot_process': None,
+    'bot_running': False
+}
+
+
+def check_config():
+    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    if not os.path.exists(env_path):
+        return False
+    if config.LLM_MODE == "api" and not config.API_KEY:
+        return False
+    return True
+
+
+def save_config(updates):
+    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+    new_lines = []
+    updated_keys = set()
+
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            key = line.split('=')[0]
+            if key in updates:
+                new_lines.append(f"{key}={updates[key]}\n")
+                updated_keys.add(key)
+            else:
+                new_lines.append(line + '\n')
+        else:
+            new_lines.append(line + '\n')
+
+    for key, value in updates.items():
+        if key not in updated_keys:
+            new_lines.append(f"{key}={value}\n")
+
+    with open(env_path, 'w', encoding='utf-8') as f:
+        f.writelines(new_lines)
+
+    from dotenv import load_dotenv
+    load_dotenv(env_path, override=True)
+
+    for key, value in updates.items():
+        if hasattr(config, key):
+            if key in ('PORT', 'WEB_PORT'):
+                setattr(config, key, int(value))
+            else:
+                setattr(config, key, value)
+
+
+def test_llm_connection():
+    try:
+        from llm_service import llm_service
+        return llm_service.test_connection()
+    except Exception:
+        return False
+
+
+def analyze_message(message):
+    try:
+        from llm_service import llm_service
+        return llm_service.analyze_message(message)
+    except Exception as e:
+        return {
+            "category": "other",
+            "summary": message[:50],
+            "need_alert": False,
+            "alert_level": "low",
+            "suggested_action": str(e)
+        }
+
+
+def inject_styles():
+    ui.add_head_html(f'''
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+
+        * {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+        }}
+
+        h1 {{ font-size: 24px; font-weight: 700; color: {GRAY_900}; }}
+        h2 {{ font-size: 20px; font-weight: 600; color: {GRAY_800}; }}
+        h3 {{ font-size: 16px; font-weight: 600; color: {GRAY_700}; }}
+
+        .q-btn {{ font-weight: 500; letter-spacing: 0; text-transform: none; }}
+
+        .app-header {{
+            background: {PRIMARY};
+            color: white;
+        }}
+
+        .sidebar {{
+            background: white;
+            border-right: 1px solid {GRAY_200};
+        }}
+
+        .sidebar-item {{
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            color: {GRAY_600};
+            font-weight: 500;
+            font-size: 14px;
+        }}
+        .sidebar-item:hover {{
+            background: {GRAY_100};
+            color: {GRAY_800};
+        }}
+        .sidebar-item.active {{
+            background: {PRIMARY_LIGHT};
+            color: {PRIMARY};
+        }}
+
+        .stat-card {{
+            background: white;
+            border-radius: 12px;
+            border: 1px solid {GRAY_200};
+            transition: box-shadow 0.2s ease;
+        }}
+        .stat-card:hover {{
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        }}
+
+        .content-card {{
+            background: white;
+            border-radius: 12px;
+            border: 1px solid {GRAY_200};
+        }}
+
+        .alert-item {{
+            border-left: 4px solid;
+            border-radius: 8px;
+            transition: background 0.15s ease;
+        }}
+        .alert-item:hover {{
+            background: {GRAY_50};
+        }}
+        .alert-high {{ border-color: {DANGER}; }}
+        .alert-medium {{ border-color: {WARNING}; }}
+        .alert-low {{ border-color: {PRIMARY}; }}
+
+        .status-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+        }}
+        .status-online {{ background: {SUCCESS_LIGHT}; color: {SUCCESS}; }}
+        .status-offline {{ background: {DANGER_LIGHT}; color: {DANGER}; }}
+
+        .setup-option {{
+            border: 2px solid {GRAY_200};
+            border-radius: 12px;
+            padding: 24px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }}
+        .setup-option:hover {{
+            border-color: {PRIMARY};
+            background: {PRIMARY_LIGHT};
+        }}
+        .setup-option.selected {{
+            border-color: {PRIMARY};
+            background: {PRIMARY_LIGHT};
+        }}
+
+        .empty-state {{
+            text-align: center;
+            padding: 48px 24px;
+            color: {GRAY_400};
+        }}
+
+        .section-title {{
+            font-size: 16px;
+            font-weight: 600;
+            color: {GRAY_800};
+            margin-bottom: 16px;
+        }}
+
+        .btn-primary {{
+            background: {PRIMARY} !important;
+            color: white !important;
+        }}
+        .btn-success {{
+            background: {SUCCESS} !important;
+            color: white !important;
+        }}
+        .text-xs {{ font-size: 12px; }}
+        .text-muted {{ color: {GRAY_500}; }}
+        .text-primary {{ color: {PRIMARY}; }}
+        .text-success {{ color: {SUCCESS}; }}
+        .text-warning {{ color: {WARNING}; }}
+        .text-danger {{ color: {DANGER}; }}
+
+        .bg-main {{ background: {GRAY_50}; }}
+    </style>
+    ''')
+
+
+@ui.page('/')
+def main_page():
+    inject_styles()
+    if not check_config():
+        show_setup_page()
+    else:
+        show_dashboard()
+
+
+def show_setup_page():
+    with ui.column().classes('w-full min-h-screen items-center justify-center').style(f'background: {GRAY_50}'):
+        with ui.card().classes('w-full max-w-2xl p-8 shadow-lg').style('border-radius: 16px; border: none;'):
+            with ui.column().classes('items-center mb-8'):
+                ui.label('群小二').style(f'font-size: 28px; font-weight: 700; color: {PRIMARY};')
+                ui.label('群众诉求智能分拣与预警系统').style(f'font-size: 15px; color: {GRAY_500}; margin-top: 4px;')
+
+            ui.linear_progress(value=0.33, show_value=False).classes('w-full mb-8').props(f'color={PRIMARY}')
+
+            ui.label('选择 AI 模型').style(f'font-size: 18px; font-weight: 600; color: {GRAY_800};')
+            ui.label('选择一种方式来驱动消息分析功能').style(f'font-size: 14px; color: {GRAY_500}; margin-bottom: 24px;')
+
+            with ui.row().classes('w-full gap-4'):
+                with ui.card().classes('flex-1 setup-option').style('border-radius: 12px;') as ollama_card:
+                    with ui.column().classes('items-center gap-2'):
+                        ui.label('本地部署').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800};')
+                        ui.label('Ollama').style(f'font-size: 13px; color: {GRAY_500}; margin-bottom: 12px;')
+                        with ui.column().classes('gap-1').style(f'font-size: 13px; color: {GRAY_600};'):
+                            ui.label('完全免费')
+                            ui.label('数据不出内网')
+                            ui.label('需要 8GB+ 内存')
+
+                with ui.card().classes('flex-1 setup-option').style('border-radius: 12px;') as api_card:
+                    with ui.column().classes('items-center gap-2'):
+                        ui.label('云端调用').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800};')
+                        ui.label('API').style(f'font-size: 13px; color: {GRAY_500}; margin-bottom: 12px;')
+                        with ui.column().classes('gap-1').style(f'font-size: 13px; color: {GRAY_600};'):
+                            ui.label('开箱即用')
+                            ui.label('响应更快')
+                            ui.label('按量付费')
+
+            form_container = ui.column().classes('w-full mt-4')
+
+        def select_ollama():
+            ollama_card.classes(remove='setup-option', add='selected')
+            api_card.classes(remove='selected', add='setup-option')
+            form_container.clear()
+            show_ollama_form(form_container)
+
+        def select_api():
+            api_card.classes(remove='setup-option', add='selected')
+            ollama_card.classes(remove='selected', add='setup-option')
+            form_container.clear()
+            show_api_form(form_container)
+
+        ollama_card.on('click', select_ollama)
+        api_card.on('click', select_api)
+
+
+def show_ollama_form(container):
+    with container:
+        with ui.card().classes('w-full p-6').style(f'background: {GRAY_50}; border-radius: 12px; border: 1px solid {GRAY_200};'):
+            ui.label('配置 Ollama').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 16px;')
+
+            with ui.stepper().classes('w-full') as stepper:
+                with ui.step('安装 Ollama'):
+                    ui.markdown('''
+                    1. 访问 [ollama.com](https://ollama.com) 下载安装
+                    2. 或使用命令：
+                    ```bash
+                    curl -fsSL https://ollama.com/install.sh | sh
+                    ```
+                    ''')
+                    with ui.stepper_navigation():
+                        ui.button('下一步', on_click=stepper.next).props(f'color={PRIMARY}').classes('btn-primary')
+
+                with ui.step('下载模型'):
+                    ui.label('打开终端，运行以下命令下载模型：').style(f'font-size: 14px; color: {GRAY_600};')
+                    ui.code('ollama pull qwen2:7b', language='bash').classes('w-full')
+                    ui.label('下载约需几分钟，取决于网速').style(f'font-size: 12px; color: {GRAY_500}; margin-top: 8px;')
+                    with ui.stepper_navigation():
+                        ui.button('上一步', on_click=stepper.previous).props('flat')
+                        ui.button('下一步', on_click=stepper.next).props(f'color={PRIMARY}').classes('btn-primary')
+
+                with ui.step('测试连接'):
+                    base_url = ui.input('Ollama 地址', value='http://localhost:11434').classes('w-full')
+                    model = ui.select(
+                        ['qwen2:7b', 'qwen2:1.5b', 'qwen2:0.5b'],
+                        value='qwen2:7b',
+                        label='选择模型'
+                    ).classes('w-full')
+
+                    async def save_and_test():
+                        save_config({
+                            'LLM_MODE': 'ollama',
+                            'OLLAMA_BASE_URL': base_url.value,
+                            'OLLAMA_MODEL': model.value
+                        })
+                        ui.notify('正在测试连接...', type='info')
+                        if test_llm_connection():
+                            ui.notify('连接成功', type='positive')
+                            ui.navigate.to('/')
+                        else:
+                            ui.notify('连接失败，请检查 Ollama 是否已启动', type='negative')
+
+                    with ui.stepper_navigation():
+                        ui.button('上一步', on_click=stepper.previous).props('flat')
+                        ui.button('保存并测试', on_click=save_and_test).props(f'color={PRIMARY}').classes('btn-primary')
+
+
+def show_api_form(container):
+    with container:
+        with ui.card().classes('w-full p-6').style(f'background: {GRAY_50}; border-radius: 12px; border: 1px solid {GRAY_200};'):
+            ui.label('配置 API').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 16px;')
+
+            providers = {
+                '通义千问（阿里云）': {
+                    'help': '访问 [阿里云百炼平台](https://bailian.console.aliyun.com/) 获取 API Key',
+                    'url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                    'model': 'qwen-plus',
+                },
+                'DeepSeek': {
+                    'help': '访问 [DeepSeek 开放平台](https://platform.deepseek.com/) 获取 API Key',
+                    'url': 'https://api.deepseek.com/v1',
+                    'model': 'deepseek-chat',
+                },
+                'OpenAI': {
+                    'help': '访问 [OpenAI 平台](https://platform.openai.com/) 获取 API Key',
+                    'url': 'https://api.openai.com/v1',
+                    'model': 'gpt-4o-mini',
+                }
+            }
+
+            provider = ui.select(
+                list(providers.keys()),
+                value='通义千问（阿里云）',
+                label='服务商'
+            ).classes('w-full')
+
+            help_text = ui.markdown(providers['通义千问（阿里云）']['help']).style(f'font-size: 13px; color: {GRAY_500}; margin: 12px 0;')
+
+            api_key = ui.input('API Key', password=True, placeholder='sk-...').classes('w-full')
+            api_url = ui.input('API 地址', value=providers['通义千问（阿里云）']['url']).classes('w-full')
+            model = ui.input('模型名称', value=providers['通义千问（阿里云）']['model']).classes('w-full')
+
+            def on_provider_change():
+                p = providers[provider.value]
+                help_text.content = p['help']
+                api_url.value = p['url']
+                model.value = p['model']
+
+            provider.on('change', on_provider_change)
+
+            async def save_and_test():
+                if not api_key.value:
+                    ui.notify('请输入 API Key', type='negative')
+                    return
+                save_config({
+                    'LLM_MODE': 'api',
+                    'API_KEY': api_key.value,
+                    'API_BASE_URL': api_url.value,
+                    'API_MODEL': model.value
+                })
+                ui.notify('正在测试连接...', type='info')
+                if test_llm_connection():
+                    ui.notify('连接成功', type='positive')
+                    ui.navigate.to('/')
+                else:
+                    ui.notify('连接失败，请检查 API Key 是否正确', type='negative')
+
+            ui.button('保存并测试', on_click=save_and_test).classes('w-full mt-4 btn-primary').props(f'color={PRIMARY} size=lg')
+
+
+def show_dashboard():
+    inject_styles()
+
+    # 顶部导航
+    with ui.header().classes('app-header').style('height: 56px;'):
+        with ui.row().classes('w-full items-center px-6'):
+            ui.label('群小二').style('font-size: 18px; font-weight: 700; letter-spacing: 0.5px;')
+            ui.space()
+            feishu_ok = bool(config.FEISHU_APP_ID and config.FEISHU_APP_SECRET and 'your-' not in config.FEISHU_APP_ID)
+            if app_state['bot_running']:
+                ui.label('机器人运行中').classes('status-badge status-online')
+            elif feishu_ok:
+                ui.label('飞书已配置').style(f'font-size: 12px; font-weight: 500; color: {WARNING}; background: {WARNING_LIGHT}; padding: 2px 10px; border-radius: 12px;')
+            else:
+                ui.label('飞书未配置').classes('status-badge status-offline')
+            ui.button(icon='settings', on_click=lambda: ui.navigate.to('/')).props('flat color=white').style('margin-left: 12px;')
+
+    # 侧边栏
+    with ui.left_drawer().classes('sidebar').style('width: 200px; padding: 16px 12px;'):
+        ui.label('导航').style(f'font-size: 11px; font-weight: 600; color: {GRAY_400}; text-transform: uppercase; letter-spacing: 1px; padding: 0 12px; margin-bottom: 8px;')
+
+        menu_items = [
+            ('overview', '数据概览'),
+            ('messages', '消息记录'),
+            ('alerts', '预警管理'),
+            ('stats', '统计分析'),
+            ('feishu', '飞书接入'),
+            ('test', '功能测试'),
+        ]
+
+        menu_buttons = {}
+
+        for tab_id, label in menu_items:
+            btn = ui.label(label).classes('sidebar-item')
+            btn.on('click', lambda t=tab_id: switch_tab(t))
+            menu_buttons[tab_id] = btn
+
+        ui.separator().style(f'margin: 16px 0; border-color: {GRAY_200};')
+
+        ui.label('系统').style(f'font-size: 11px; font-weight: 600; color: {GRAY_400}; text-transform: uppercase; letter-spacing: 1px; padding: 0 12px; margin-bottom: 8px;')
+
+        with ui.card().classes('w-full').style(f'padding: 12px; background: {GRAY_50}; border-radius: 8px; border: 1px solid {GRAY_200};'):
+            if config.LLM_MODE == 'ollama':
+                ui.label('本地模型').style(f'font-size: 12px; color: {GRAY_500};')
+                ui.label(config.OLLAMA_MODEL).style(f'font-size: 13px; font-weight: 500; color: {GRAY_700};')
+            else:
+                ui.label('云端 API').style(f'font-size: 12px; color: {GRAY_500};')
+                ui.label(config.API_MODEL).style(f'font-size: 13px; font-weight: 500; color: {GRAY_700};')
+
+    def switch_tab(tab_id):
+        tabs.set_value(tab_id)
+        for tid, btn in menu_buttons.items():
+            if tid == tab_id:
+                btn.classes(remove='')
+                btn.classes(add='active')
+            else:
+                btn.classes(remove='active')
+
+    # 主内容区
+    with ui.column().classes('w-full bg-main').style('min-height: calc(100vh - 56px); padding: 24px;'):
+        tabs = ui.tabs().classes('hidden')
+
+        with tabs:
+            for tab_id in ['overview', 'messages', 'alerts', 'stats', 'feishu', 'test']:
+                ui.tab(tab_id)
+
+        tab_panels = {
+            'overview': show_overview_tab,
+            'messages': show_messages_tab,
+            'alerts': show_alerts_tab,
+            'stats': show_stats_tab,
+            'feishu': show_feishu_tab,
+            'test': show_test_tab,
+        }
+
+        content_area = ui.column().classes('w-full')
+
+        def render_tab(tab_id):
+            content_area.clear()
+            with content_area:
+                tab_panels[tab_id]()
+
+        tabs.on_value_change(lambda e: render_tab(e.value))
+        render_tab('overview')
+        menu_buttons['overview'].classes(add='active')
+
+
+def show_overview_tab():
+    stats = db.get_stats(days=7)
+    alert_total = stats['alert_stats'].get('total', 0)
+    alert_handled = stats['alert_stats'].get('handled', 0)
+    handle_rate = f"{alert_handled / alert_total * 100:.0f}%" if alert_total > 0 else '0%'
+
+    stat_data = [
+        ('本周消息', str(sum(stats['category_stats'].values())), '全部消息', PRIMARY),
+        ('紧急诉求', str(stats['category_stats'].get('urgent', 0)), '需要立即处理', DANGER),
+        ('预警总数', str(alert_total), '待处理预警', WARNING),
+        ('处理率', handle_rate, '已处理占比', SUCCESS),
+    ]
+
+    with ui.row().classes('w-full gap-4 mb-6'):
+        for title, value, subtitle, color in stat_data:
+            with ui.card().classes('stat-card flex-1 p-5'):
+                ui.label(title).style(f'font-size: 13px; color: {GRAY_500}; font-weight: 500;')
+                ui.label(value).style(f'font-size: 28px; font-weight: 700; color: {color}; margin: 8px 0 4px;')
+                ui.label(subtitle).style(f'font-size: 12px; color: {GRAY_400};')
+
+    with ui.row().classes('w-full gap-6'):
+        # 消息分类分布
+        with ui.card().classes('content-card flex-1 p-6'):
+            ui.label('消息分类分布').classes('section-title')
+
+            if stats['category_stats']:
+                max_count = max(stats['category_stats'].values())
+                for category, count in stats['category_stats'].items():
+                    label = config.CATEGORIES.get(category, category)
+                    ratio = count / max_count if max_count > 0 else 0
+                    with ui.row().classes('items-center gap-3 mb-3'):
+                        ui.label(label).style(f'width: 72px; font-size: 13px; color: {GRAY_600};')
+                        ui.linear_progress(value=ratio, show_value=False).classes('flex-1').props(f'color={PRIMARY}')
+                        ui.label(str(count)).style(f'width: 32px; text-align: right; font-size: 13px; font-weight: 600; color: {GRAY_700};')
+            else:
+                with ui.column().classes('empty-state'):
+                    ui.label('暂无数据').style(f'font-size: 14px; color: {GRAY_400};')
+
+        # 最近预警
+        with ui.card().classes('content-card flex-1 p-6'):
+            ui.label('最近预警').classes('section-title')
+
+            alerts = db.get_alerts(is_handled=0)[:5]
+            if alerts:
+                for alert in alerts:
+                    level = alert['alert_level'] or 'low'
+                    level_class = f'alert-{level}' if level in ['high', 'medium', 'low'] else 'alert-low'
+                    with ui.card().classes(f'alert-item {level_class} p-3 mb-2').style(f'border-radius: 8px; border: none; background: {GRAY_50};'):
+                        with ui.row().classes('items-center justify-between'):
+                            with ui.column().classes('flex-1'):
+                                ui.label(alert['alert_content'][:40]).style(f'font-size: 13px; font-weight: 500; color: {GRAY_800};')
+                                ui.label(f"{alert['sender_name']}  {alert['created_at'][:16]}").style(f'font-size: 12px; color: {GRAY_400}; margin-top: 2px;')
+                            ui.button('处理', on_click=lambda a=alert: handle_alert(a['id'])).props('size=sm flat').style(f'color: {PRIMARY};')
+            else:
+                with ui.column().classes('empty-state'):
+                    ui.label('暂无待处理预警').style(f'font-size: 14px; color: {GRAY_400};')
+
+
+def handle_alert(alert_id):
+    db.handle_alert(alert_id, '管理员')
+    ui.notify('已标记为已处理', type='positive')
+    ui.navigate.to('/')
+
+
+def show_messages_tab():
+    with ui.card().classes('content-card p-6'):
+        with ui.row().classes('w-full items-center justify-between mb-6'):
+            ui.label('消息记录').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800};')
+            with ui.row().classes('gap-3'):
+                ui.select(
+                    ['全部'] + list(config.CATEGORIES.values()),
+                    value='全部',
+                    label='分类筛选'
+                ).classes('w-48')
+                ui.button('刷新', icon='refresh', on_click=lambda: ui.navigate.to('/')).props('outline').style(f'color: {PRIMARY};')
+
+        messages = db.get_messages(limit=100)
+        if messages:
+            columns = [
+                {'name': 'time', 'label': '时间', 'field': 'time', 'align': 'left'},
+                {'name': 'sender', 'label': '发送者', 'field': 'sender', 'align': 'left'},
+                {'name': 'content', 'label': '内容', 'field': 'content', 'align': 'left'},
+                {'name': 'category', 'label': '分类', 'field': 'category', 'align': 'center'},
+                {'name': 'summary', 'label': '摘要', 'field': 'summary', 'align': 'left'},
+                {'name': 'level', 'label': '等级', 'field': 'level', 'align': 'center'},
+            ]
+
+            rows = []
+            for msg in messages:
+                rows.append({
+                    'time': msg['created_at'][:16],
+                    'sender': msg['sender_name'] or '-',
+                    'content': msg['content'][:50] + ('...' if len(msg['content']) > 50 else ''),
+                    'category': config.CATEGORIES.get(msg['category'], msg['category']),
+                    'summary': msg['summary'] or '-',
+                    'level': msg['alert_level'] or '-'
+                })
+
+            ui.table(columns=columns, rows=rows).classes('w-full').props('flat bordered')
+        else:
+            with ui.column().classes('empty-state'):
+                ui.label('暂无消息记录').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
+                ui.label('接入飞书后，消息将自动显示在这里').style(f'font-size: 13px; color: {GRAY_400}; margin-top: 4px;')
+
+
+def show_alerts_tab():
+    with ui.card().classes('content-card p-6'):
+        ui.label('预警管理').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 24px;')
+
+        alerts = db.get_alerts(is_handled=0)
+        if alerts:
+            for alert in alerts:
+                level = alert['alert_level'] or 'low'
+                level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
+                level_labels = {'high': '紧急', 'medium': '警告', 'low': '提示'}
+                color = level_colors.get(level, GRAY_500)
+                label_text = level_labels.get(level, '未知')
+
+                with ui.card().classes(f'alert-item alert-{level} p-4 mb-3').style(f'border-radius: 8px; border: none; background: white;'):
+                    with ui.row().classes('items-center justify-between'):
+                        with ui.column().classes('flex-1'):
+                            with ui.row().classes('items-center gap-2 mb-2'):
+                                ui.label(label_text).style(f'font-size: 12px; font-weight: 600; color: white; background: {color}; padding: 2px 10px; border-radius: 12px;')
+                                ui.label(alert['alert_content']).style(f'font-size: 14px; font-weight: 600; color: {GRAY_800};')
+                            ui.label(alert['content'][:100]).style(f'font-size: 13px; color: {GRAY_600}; margin-bottom: 4px;')
+                            ui.label(f"{alert['sender_name']}  {alert['created_at'][:16]}").style(f'font-size: 12px; color: {GRAY_400};')
+                            ui.button('标记处理', on_click=lambda a=alert: handle_alert(a['id'])).props(f'color={color}').style('color: white !important;')
+        else:
+            with ui.column().classes('empty-state'):
+                ui.label('暂无待处理预警').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
+                ui.label('所有预警已处理完毕').style(f'font-size: 13px; color: {GRAY_400}; margin-top: 4px;')
+
+
+def show_stats_tab():
+    stats = db.get_stats(days=7)
+
+    with ui.card().classes('content-card p-6'):
+        ui.label('统计分析').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 24px;')
+
+        if stats['category_stats']:
+            with ui.row().classes('w-full gap-6'):
+                with ui.column().classes('flex-1'):
+                    ui.label('消息分类占比').style(f'font-size: 14px; font-weight: 600; color: {GRAY_700}; margin-bottom: 16px;')
+                    for category, count in stats['category_stats'].items():
+                        label = config.CATEGORIES.get(category, category)
+                        ratio = count / max(stats['category_stats'].values())
+                        with ui.card().classes('p-3 mb-2').style(f'border-radius: 8px; border: 1px solid {GRAY_200};'):
+                            with ui.row().classes('items-center gap-3'):
+                                ui.label(label).style(f'width: 80px; font-size: 13px; color: {GRAY_600};')
+                                ui.linear_progress(value=ratio, show_value=True).classes('flex-1').props(f'color={PRIMARY}')
+                                ui.label(str(count)).style(f'width: 32px; text-align: right; font-size: 13px; font-weight: 600;')
+
+                with ui.column().classes('flex-1'):
+                    ui.label('分类详情').style(f'font-size: 14px; font-weight: 600; color: {GRAY_700}; margin-bottom: 16px;')
+                    with ui.card().classes('p-4').style(f'background: {GRAY_50}; border-radius: 8px; border: 1px solid {GRAY_200};'):
+                        for category, count in stats['category_stats'].items():
+                            label = config.CATEGORIES.get(category, category)
+                            with ui.row().classes('items-center justify-between py-2').style(f'border-bottom: 1px solid {GRAY_200};'):
+                                ui.label(label).style(f'font-size: 13px; color: {GRAY_600};')
+                                ui.label(str(count)).style(f'font-size: 13px; font-weight: 600; color: {PRIMARY};')
+        else:
+            with ui.column().classes('empty-state'):
+                ui.label('暂无统计数据').style(f'font-size: 15px; color: {GRAY_400}; font-weight: 500;')
+
+
+def show_feishu_tab():
+    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    from dotenv import load_dotenv
+    load_dotenv(env_path, override=True)
+    for attr in ['FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_VERIFICATION_TOKEN', 'FEISHU_ENCRYPT_KEY', 'BOT_MODE']:
+        setattr(config, attr, os.getenv(attr, ''))
+
+    feishu_configured = bool(config.FEISHU_APP_ID and config.FEISHU_APP_SECRET and 'your-' not in config.FEISHU_APP_ID)
+
+    with ui.card().classes('w-full p-6'):
+        ui.label('飞书机器人接入').style('font-size: 18px; font-weight: 700; margin-bottom: 16px;')
+
+        if feishu_configured:
+            ui.label('已配置').classes('text-positive')
+            ui.label(f'App ID: {config.FEISHU_APP_ID}')
+            ui.label(f'模式: {config.BOT_MODE}')
+        else:
+            ui.label('未配置').classes('text-negative')
+
+    with ui.card().classes('w-full p-6 mt-4'):
+        ui.label('机器人控制').style('font-size: 18px; font-weight: 700; margin-bottom: 16px;')
+
+        status_text = '运行中' if app_state['bot_running'] else '未启动'
+        ui.label(f'状态: {status_text}')
+
+        async def start_bot():
+            if not feishu_configured:
+                ui.notify('请先完成飞书配置', type='negative')
+                return
+            try:
+                bot_dir = os.path.dirname(__file__)
+                script = 'feishu_bot_sdk.py' if config.BOT_MODE == 'sdk' else 'feishu_bot.py'
+                subprocess.Popen([sys.executable, script], cwd=bot_dir)
+                app_state['bot_running'] = True
+                ui.notify('机器人已启动', type='positive')
+            except Exception as e:
+                ui.notify(f'启动失败: {e}', type='negative')
+
+        async def stop_bot():
+            if app_state['bot_process']:
+                app_state['bot_process'].terminate()
+                app_state['bot_process'] = None
+                app_state['bot_running'] = False
+                ui.notify('机器人已停止', type='info')
+            else:
+                ui.notify('机器人未在运行', type='warning')
+
+        ui.button('启动机器人', on_click=start_bot, icon='play_arrow')
+        ui.button('停止机器人', on_click=stop_bot, icon='stop')
+
+
+def show_test_tab():
+    with ui.card().classes('content-card p-6'):
+        ui.label('功能测试').style(f'font-size: 16px; font-weight: 600; color: {GRAY_800}; margin-bottom: 4px;')
+        ui.label('输入一条消息，测试 AI 分析效果').style(f'font-size: 14px; color: {GRAY_500}; margin-bottom: 24px;')
+
+        test_input = ui.textarea(
+            label='测试消息',
+            placeholder='例如：我们楼的电梯又坏了，老人上下楼怎么办啊',
+            value='隔壁装修噪音太大了，周末都不休息'
+        ).classes('w-full')
+
+        result_card = ui.card().classes('w-full mt-4 hidden').style(f'padding: 24px; background: {GRAY_50}; border-radius: 12px; border: 1px solid {GRAY_200};')
+
+        async def test_analyze():
+            if not test_input.value:
+                ui.notify('请输入测试消息', type='warning')
+                return
+
+            ui.notify('正在分析...', type='info')
+            result = analyze_message(test_input.value)
+
+            category = config.CATEGORIES.get(result.get('category'), result.get('category'))
+            need_alert = result.get('need_alert', False)
+            level = result.get('alert_level', '-')
+
+            level_colors = {'high': DANGER, 'medium': WARNING, 'low': PRIMARY}
+            level_labels = {'high': '紧急', 'medium': '警告', 'low': '提示'}
+
+            result_card.classes(remove='hidden')
+            result_card.clear()
+
+            with result_card:
+                with ui.row().classes('items-center gap-3 mb-4'):
+                    ui.label('分析结果').style(f'font-size: 15px; font-weight: 600; color: {GRAY_800};')
+                    ui.label(category).style(f'font-size: 12px; font-weight: 500; color: white; background: {PRIMARY}; padding: 2px 10px; border-radius: 12px;')
+                    if need_alert:
+                        level_color = level_colors.get(level, GRAY_500)
+                        level_text = level_labels.get(level, '预警')
+                        ui.label(level_text).style(f'font-size: 12px; font-weight: 500; color: white; background: {level_color}; padding: 2px 10px; border-radius: 12px;')
+
+                with ui.row().classes('gap-8'):
+                    with ui.column().classes('flex-1'):
+                        ui.label('摘要').style(f'font-size: 12px; color: {GRAY_500}; margin-bottom: 4px;')
+                        ui.label(result.get('summary', '-')).style(f'font-size: 14px; color: {GRAY_800};')
+
+                    with ui.column().classes('flex-1'):
+                        ui.label('建议处理').style(f'font-size: 12px; color: {GRAY_500}; margin-bottom: 4px;')
+                        ui.label(result.get('suggested_action', '-')).style(f'font-size: 14px; color: {GRAY_800};')
+
+        ui.button('开始分析', icon='psychology', on_click=test_analyze).classes('mt-4').props(f'color={PRIMARY}').classes('btn-primary')
+
+
+if __name__ in {"__main__", "__mp_main__"}:
+    ui.run(
+        title='群小二 - 管理后台',
+        port=8501,
+        dark=False
+    )

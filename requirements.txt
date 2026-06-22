@@ -1,0 +1,7 @@
+openai>=1.0.0
+flask>=3.0.0
+python-dotenv>=1.0.0
+pandas>=2.0.0
+customtkinter>=5.2.0
+nicegui>=1.4.0
+lark-oapi>=1.0.0

@@ -1,0 +1,42 @@
+[
+    {
+        "content": "我们楼的电梯又坏了，老人上下楼怎么办啊",
+        "expected_category": "urgent",
+        "expected_alert": true
+    },
+    {
+        "content": "今天天气真好，大家早上好",
+        "expected_category": "chat",
+        "expected_alert": false
+    },
+    {
+        "content": "隔壁装修噪音太大了，周末都不休息",
+        "expected_category": "complaint",
+        "expected_alert": false
+    },
+    {
+        "content": "小区门口的路灯坏了好几天了，晚上黑漆漆的",
+        "expected_category": "repair",
+        "expected_alert": false
+    },
+    {
+        "content": "请问物业费怎么交？在哪里交？",
+        "expected_category": "consult",
+        "expected_alert": false
+    },
+    {
+        "content": "6栋2单元漏水了，水都流到楼道了",
+        "expected_category": "urgent",
+        "expected_alert": true
+    },
+    {
+        "content": "小区的流浪猫太多了，能不能处理一下",
+        "expected_category": "complaint",
+        "expected_alert": false
+    },
+    {
+        "content": "明天停水通知，大家提前储水",
+        "expected_category": "other",
+        "expected_alert": false
+    }
+]
